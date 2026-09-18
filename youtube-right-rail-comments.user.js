@@ -2,7 +2,7 @@
 // @name         YouTube Right Rail Comments
 // @name:ko      YouTube 오른쪽 댓글 패널
 // @namespace    local.codex.youtube-right-rail-comments
-// @version      0.3.4
+// @version      0.3.5
 // @author       Oince
 // @homepageURL  https://github.com/Oince/youtube-right-rail-comments
 // @supportURL   https://github.com/Oince/youtube-right-rail-comments/issues
@@ -43,6 +43,8 @@
     relatedNode: null,
     commentsMarker: null,
     relatedMarker: null,
+    commentsHome: null,
+    unavailableTimer: 0,
     commentsReady: false,
     activeTab: 'comments',
     scrollTop: { comments: 0, related: 0 },
@@ -85,7 +87,7 @@
     const style = document.createElement('style');
     style.id = `${SCRIPT_ID}-styles`;
     style.textContent = `
-      html.${SCRIPT_ID}-active ytd-watch-flexy #secondary {
+      html.${SCRIPT_ID}-active:not(.${SCRIPT_ID}-suspended) ytd-watch-flexy #secondary {
         position: sticky !important;
         top: calc(var(--ytd-masthead-height, 56px) + 12px) !important;
         align-self: flex-start !important;
@@ -95,7 +97,7 @@
         overflow: hidden !important;
       }
 
-      html.${SCRIPT_ID}-active ytd-watch-flexy #secondary-inner {
+      html.${SCRIPT_ID}-active:not(.${SCRIPT_ID}-suspended) ytd-watch-flexy #secondary-inner {
         display: flex !important;
         flex-direction: column !important;
         height: 100% !important;
@@ -104,8 +106,8 @@
         overflow: hidden !important;
       }
 
-      html.${SCRIPT_ID}-active ytd-watch-flexy #secondary-inner > #related,
-      html.${SCRIPT_ID}-active ytd-watch-flexy #secondary-inner > ytd-watch-next-secondary-results-renderer#related {
+      html.${SCRIPT_ID}-active:not(.${SCRIPT_ID}-suspended) ytd-watch-flexy #secondary-inner > #related,
+      html.${SCRIPT_ID}-active:not(.${SCRIPT_ID}-suspended) ytd-watch-flexy #secondary-inner > ytd-watch-next-secondary-results-renderer#related {
         display: none !important;
       }
 
@@ -367,6 +369,21 @@
       tabs.appendChild(button);
     }
 
+    tabs.addEventListener('keydown', (event) => {
+      const buttons = [...tabs.querySelectorAll('[role="tab"]')];
+      const index = buttons.indexOf(document.activeElement);
+      if (index < 0) return;
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % buttons.length;
+      else if (event.key === 'ArrowLeft') next = (index + buttons.length - 1) % buttons.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = buttons.length - 1;
+      else return;
+      event.preventDefault();
+      switchTab(buttons[next].dataset.tab);
+      buttons[next].focus();
+    });
+
     const body = document.createElement('div');
     body.id = `${SCRIPT_ID}-body`;
 
@@ -410,8 +427,8 @@
     const text = labels();
     const commentsTab = state.root.querySelector(`[data-tab='comments'].${SCRIPT_ID}-tab`);
     const relatedTab = state.root.querySelector(`[data-tab='related'].${SCRIPT_ID}-tab`);
-    if (commentsTab) commentsTab.textContent = text.comments;
-    if (relatedTab) relatedTab.textContent = text.related;
+    if (commentsTab && commentsTab.textContent !== text.comments) commentsTab.textContent = text.comments;
+    if (relatedTab && relatedTab.textContent !== text.related) relatedTab.textContent = text.related;
     state.root.setAttribute('aria-label', `${text.comments} / ${text.related}`);
   }
 
@@ -434,8 +451,9 @@
     });
 
     const activePane = tabName === 'comments' ? state.commentsPane : state.relatedPane;
+    const generation = state.generation;
     requestAnimationFrame(() => {
-      if (!activePane) return;
+      if (generation !== state.generation || !activePane?.isConnected || state.activeTab !== tabName) return;
       activePane.scrollTop = options.reset ? 0 : state.scrollTop[tabName];
       activePane.dispatchEvent(new Event('scroll'));
     });
@@ -470,19 +488,30 @@
     state.commentsObserver?.disconnect();
     if (!state.commentsNode) return;
 
+    const generation = state.generation;
+    const node = state.commentsNode;
+    let unavailable = false;
     const check = () => {
-      if (!state.commentsNode || state.videoId !== readVideoId()) return;
+      if (generation !== state.generation || node !== state.commentsNode || state.videoId !== readVideoId()) return;
       if (commentsUnavailable(state.commentsNode)) {
         state.commentsReady = true;
         clearTimeout(state.commentsTimeout);
         setCommentsStatus(null);
-        showToast(labels().unavailable);
-        window.setTimeout(() => {
-          if (state.videoId === readVideoId()) switchTab('related');
-        }, 900);
+        if (!unavailable) {
+          unavailable = true;
+          showToast(labels().unavailable);
+          clearTimeout(state.unavailableTimer);
+          state.unavailableTimer = window.setTimeout(() => {
+            if (generation === state.generation && node === state.commentsNode && state.videoId === readVideoId()) {
+              switchTab('related');
+            }
+          }, 900);
+        }
         return;
       }
 
+      unavailable = false;
+      clearTimeout(state.unavailableTimer);
       if (commentsHaveLoaded(state.commentsNode)) {
         state.commentsReady = true;
         clearTimeout(state.commentsTimeout);
@@ -514,6 +543,7 @@
     const comments = findNativeComments(state.watch);
     if (!comments) return false;
 
+    state.commentsHome = comments.parentNode;
     state.commentsMarker = marker('comments-home');
     comments.parentNode.insertBefore(state.commentsMarker, comments);
     state.commentsPane.appendChild(comments);
@@ -521,10 +551,29 @@
     observeComments();
 
     requestAnimationFrame(() => {
+      if (generation !== state.generation) return;
       state.commentsPane?.dispatchEvent(new Event('scroll'));
       window.dispatchEvent(new Event('scroll'));
     });
     return state.commentsReady;
+  }
+
+  function syncReplacedComments() {
+    const replacement = findNativeComments(state.watch);
+    const current = state.commentsNode;
+    if (!replacement && (!current || current.parentNode === state.commentsPane)) return;
+
+    state.commentsObserver?.disconnect();
+    clearTimeout(state.commentsTimeout);
+    clearTimeout(state.unavailableTimer);
+    if (replacement !== current && current?.parentNode === state.commentsPane) current.remove();
+    state.commentsMarker?.remove();
+    state.commentsMarker = null;
+    state.commentsHome = null;
+    state.commentsNode = null;
+    state.commentsReady = false;
+    setCommentsStatus('loading');
+    waitForComments(state.generation);
   }
 
   function waitForComments(generation, startedAt = performance.now()) {
@@ -548,8 +597,9 @@
     if (state.commentsNode) {
       state.commentsPane.scrollTop = Math.max(0, state.commentsPane.scrollHeight - state.commentsPane.clientHeight - 1);
       state.commentsPane.dispatchEvent(new Event('scroll'));
+      const generation = state.generation;
       requestAnimationFrame(() => {
-        if (state.commentsPane) state.commentsPane.scrollTop = 0;
+        if (generation === state.generation && state.commentsPane) state.commentsPane.scrollTop = 0;
       });
     }
     window.dispatchEvent(new Event('scroll'));
@@ -576,6 +626,7 @@
   function syncSpecialPanel() {
     if (!state.root) return;
     const special = detectSpecialPanel();
+    document.documentElement.classList.toggle(`${SCRIPT_ID}-suspended`, Boolean(special));
 
     if (special && !state.suspendedBy) {
       state.tabBeforeSpecialPanel = state.activeTab;
@@ -599,7 +650,10 @@
     state.specialObserver?.disconnect();
     const inner = state.watch?.querySelector(SELECTORS.secondaryInner);
     if (!inner) return;
-    state.specialObserver = new MutationObserver(() => requestAnimationFrame(syncSpecialPanel));
+    const generation = state.generation;
+    state.specialObserver = new MutationObserver(() => requestAnimationFrame(() => {
+      if (generation === state.generation) syncSpecialPanel();
+    }));
     state.specialObserver.observe(inner, {
       attributes: true,
       attributeFilter: ['visibility', 'hidden', 'collapsed'],
@@ -634,8 +688,9 @@
     state.relatedNode = replacement;
     state.scrollTop.related = savedScrollTop;
 
+    const generation = state.generation;
     requestAnimationFrame(() => {
-      if (state.activeTab === 'related' && state.relatedPane) {
+      if (generation === state.generation && state.activeTab === 'related' && state.relatedPane) {
         state.relatedPane.scrollTop = savedScrollTop;
       }
     });
@@ -671,13 +726,33 @@
     waitForComments(generation);
   }
 
-  function restoreNode(node, homeMarker) {
-    if (!node || !homeMarker?.isConnected) return;
-    homeMarker.replaceWith(node);
+  function restoreNode(node, homeMarker, kind) {
+    const watch = state.watch;
+    // Never put an old video's content into a reused watch renderer.
+    if (!node || !watch?.isConnected || watch.getAttribute('video-id') !== state.videoId) {
+      homeMarker?.remove();
+      return;
+    }
+    const native = kind === 'comments' ? findNativeComments(watch) : findNativeRelated(watch);
+    if (native) {
+      homeMarker?.remove();
+      return;
+    }
+    if (homeMarker?.isConnected && watch.contains(homeMarker)) {
+      homeMarker.replaceWith(node);
+      return;
+    }
+    const fallback = kind === 'comments'
+      ? (state.commentsHome?.isConnected && watch.contains(state.commentsHome)
+          ? state.commentsHome : watch.querySelector('#primary #below') || watch.querySelector(SELECTORS.primary))
+      : watch.querySelector(SELECTORS.secondaryInner);
+    fallback?.appendChild(node);
+    homeMarker?.remove();
   }
 
   function teardown() {
     clearTimeout(state.mountTimeout);
+    clearTimeout(state.unavailableTimer);
     clearTimeout(state.commentsTimeout);
     clearTimeout(state.retryTimer);
     state.specialObserver?.disconnect();
@@ -687,10 +762,10 @@
 
     if (state.commentsPane) state.scrollTop.comments = state.commentsPane.scrollTop;
     if (state.relatedPane) state.scrollTop.related = state.relatedPane.scrollTop;
-    restoreNode(state.commentsNode, state.commentsMarker);
-    restoreNode(state.relatedNode, state.relatedMarker);
+    restoreNode(state.commentsNode, state.commentsMarker, 'comments');
+    restoreNode(state.relatedNode, state.relatedMarker, 'related');
     state.root?.remove();
-    document.documentElement.classList.remove(`${SCRIPT_ID}-active`);
+    document.documentElement.classList.remove(`${SCRIPT_ID}-active`, `${SCRIPT_ID}-suspended`);
 
     state.generation += 1;
     state.root = null;
@@ -699,6 +774,7 @@
     state.commentsNode = null;
     state.relatedNode = null;
     state.commentsMarker = null;
+    state.commentsHome = null;
     state.relatedMarker = null;
     state.commentsReady = false;
     state.videoId = null;
@@ -717,10 +793,16 @@
       state.videoId !== nextVideoId ||
       !watchMatchesUrl(watch)
     );
-    if (wrongGeneration || (state.root && !isEligible(watch))) teardown();
+    const brokenRoot = state.root && (
+      !state.root.isConnected ||
+      state.root.parentNode !== watch?.querySelector(SELECTORS.secondaryInner) ||
+      !state.root.contains(state.commentsPane) || !state.root.contains(state.relatedPane)
+    );
+    if (wrongGeneration || brokenRoot || (state.root && !isEligible(watch))) teardown();
 
     if (!state.root && isEligible(watch)) mount(watch);
     if (state.root) {
+      syncReplacedComments();
       syncReplacedRelated();
       syncSpecialPanel();
     }
