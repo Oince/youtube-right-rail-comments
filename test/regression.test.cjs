@@ -210,3 +210,27 @@ test('special panels release rail clipping and closing them restores the panel',
   assert.equal(document.querySelector('#ytrrc-root').dataset.suspended, 'false');
   assert.equal(w.getComputedStyle(secondary).overflow, 'hidden');
 });
+
+test('selected tab survives leaving and re-entering the layout on the same video', async t => {
+  const { document, watch } = await setup(t);
+  document.querySelector('#ytrrc-related-tab').click();
+  await theater(watch);
+  assert.equal(document.querySelector('#ytrrc-root'), null);
+  watch.removeAttribute('theater');
+  await sleep(200);
+  assert.ok(document.querySelector('#ytrrc-root'));
+  assert.equal(selected(document), 'related');
+});
+
+test('navigating to another video resets the selected tab to comments', async t => {
+  const { w, document, watch } = await setup(t);
+  document.querySelector('#ytrrc-related-tab').click();
+  document.dispatchEvent(new w.Event('yt-navigate-start'));
+  w.history.pushState({}, '', '/watch?v=B');
+  watch.setAttribute('video-id', 'B');
+  document.querySelector('#below').append(newComments(document));
+  document.dispatchEvent(new w.Event('yt-navigate-finish'));
+  await sleep(300);
+  assert.ok(document.querySelector('#ytrrc-root'));
+  assert.equal(selected(document), 'comments');
+});

@@ -2,7 +2,7 @@
 // @name         YouTube Right Rail Comments
 // @name:ko      YouTube 오른쪽 댓글 패널
 // @namespace    local.codex.youtube-right-rail-comments
-// @version      0.3.5
+// @version      0.3.6
 // @author       Oince
 // @homepageURL  https://github.com/Oince/youtube-right-rail-comments
 // @supportURL   https://github.com/Oince/youtube-right-rail-comments/issues
@@ -50,6 +50,7 @@
     scrollTop: { comments: 0, related: 0 },
     suspendedBy: null,
     tabBeforeSpecialPanel: 'comments',
+    lastTab: null,
     mountTimeout: 0,
     commentsTimeout: 0,
     evaluationTimer: 0,
@@ -707,7 +708,10 @@
     const generation = state.generation;
     state.watch = watch;
     state.videoId = readVideoId();
-    state.activeTab = 'comments';
+    // Keep the chosen tab when the panel returns on the same video (e.g. after fullscreen).
+    const initialTab = state.lastTab?.videoId === state.videoId ? state.lastTab.tab : 'comments';
+    state.lastTab = null;
+    state.activeTab = initialTab;
     state.scrollTop = { comments: 0, related: 0 };
     state.commentsReady = false;
     state.suspendedBy = null;
@@ -721,7 +725,7 @@
     state.relatedNode = related;
 
     document.documentElement.classList.add(`${SCRIPT_ID}-active`);
-    switchTab('comments', { reset: true });
+    switchTab(initialTab, { reset: true });
     observeSpecialPanels();
     waitForComments(generation);
   }
@@ -760,6 +764,7 @@
     state.specialObserver = null;
     state.commentsObserver = null;
 
+    if (state.root && state.videoId) state.lastTab = { videoId: state.videoId, tab: state.activeTab };
     if (state.commentsPane) state.scrollTop.comments = state.commentsPane.scrollTop;
     if (state.relatedPane) state.scrollTop.related = state.relatedPane.scrollTop;
     restoreNode(state.commentsNode, state.commentsMarker, 'comments');
@@ -836,6 +841,7 @@
 
   function onNavigateStart() {
     teardown();
+    state.lastTab = null;
     scheduleEvaluation(150);
   }
 
