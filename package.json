@@ -1,7 +1,7 @@
 {
   "name": "youtube-right-rail-comments",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "scripts": {
     "test": "node --check youtube-right-rail-comments.user.js && node --test"
   },

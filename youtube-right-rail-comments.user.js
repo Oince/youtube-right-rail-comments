@@ -2,7 +2,7 @@
 // @name         YouTube Right Rail Comments
 // @name:ko      YouTube 오른쪽 댓글 패널
 // @namespace    local.codex.youtube-right-rail-comments
-// @version      0.3.6
+// @version      0.3.7
 // @author       Oince
 // @homepageURL  https://github.com/Oince/youtube-right-rail-comments
 // @supportURL   https://github.com/Oince/youtube-right-rail-comments/issues
@@ -20,7 +20,7 @@
   'use strict';
 
   const SCRIPT_ID = 'ytrrc';
-  const MIN_VIEWPORT_WIDTH = 1200;
+  const MIN_VIEWPORT_WIDTH = 1000;
   const COMMENTS_WAIT_MS = 20_000;
 
   const SELECTORS = {

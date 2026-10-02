@@ -7,7 +7,13 @@ const { JSDOM } = require('jsdom');
 const script = fs.readFileSync(path.join(__dirname, '../youtube-right-rail-comments.user.js'), 'utf8');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function setup(t, { disabled = false } = {}) {
+async function setup(t, {
+  disabled = false,
+  innerWidth = 1440,
+  primary = { width: 900, left: 0, right: 900 },
+  secondary = { width: 400, left: 920, right: 1320 },
+  expectRoot = true,
+} = {}) {
   const content = disabled
     ? '<ytd-message-renderer>Comments are turned off</ytd-message-renderer>'
     : '<ytd-comments-header-renderer></ytd-comments-header-renderer>';
@@ -23,18 +29,18 @@ async function setup(t, { disabled = false } = {}) {
   });
   t.after(() => dom.window.close());
   const w = dom.window;
-  w.innerWidth = 1440;
+  w.innerWidth = innerWidth;
   // jsdom has no layout engine: supply the supported two-column geometry.
   w.HTMLElement.prototype.getClientRects = function () { return [{}]; };
   w.HTMLElement.prototype.getBoundingClientRect = function () {
     return this.id === 'primary'
-      ? { width: 900, left: 0, right: 900 }
-      : { width: 400, left: 920, right: 1320 };
+      ? primary
+      : secondary;
   };
   // Count evaluations without changing the production script's behavior.
   w.eval(script.replace('function evaluate() {', 'function evaluate() { window.evaluationCount = (window.evaluationCount || 0) + 1;'));
   await sleep(200);
-  assert.ok(w.document.querySelector('#ytrrc-root'));
+  if (expectRoot) assert.ok(w.document.querySelector('#ytrrc-root'));
   return { w, document: w.document, watch: w.document.querySelector('ytd-watch-flexy') };
 }
 
@@ -62,6 +68,20 @@ async function theater(watch) {
   watch.setAttribute('theater', '');
   await sleep(200);
 }
+
+test('iPad Pro 11-inch Sidecar landscape creates the panel at 1194px', async t => {
+  const { document } = await setup(t, {
+    innerWidth: 1194,
+    primary: { width: 780, left: 16, right: 796 },
+    secondary: { width: 398, left: 796, right: 1194 },
+  });
+  assert.ok(document.querySelector('#ytrrc-root'));
+});
+
+test('viewport below 1000px does not create the panel', async t => {
+  const { document } = await setup(t, { innerWidth: 999, expectRoot: false });
+  assert.equal(document.querySelector('#ytrrc-root'), null);
+});
 
 test('idle DOM settles instead of repeatedly evaluating', async t => {
   const { w } = await setup(t);
